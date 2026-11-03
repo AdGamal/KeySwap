@@ -9,7 +9,8 @@ if [ -n "${SDK:-}" ]; then SDK_ARGS=(-sdk "$SDK"); fi
 BUILD=build
 mkdir -p "$BUILD"
 
-swift_build() { swiftc -swift-version 5 -O "${SDK_ARGS[@]}" "$@"; }
+# The ${x[@]+...} form keeps macOS's bash 3.2 happy when the list is empty.
+swift_build() { swiftc -swift-version 5 -O ${SDK_ARGS[@]+"${SDK_ARGS[@]}"} "$@"; }
 
 swift_build -o "$BUILD/tests" Sources/Converter.swift Sources/Layouts.swift Tests/main.swift
 "$BUILD/tests"
