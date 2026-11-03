@@ -16,7 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test and build
-        run: ./mac/build.sh
+        run: |
+          set -o pipefail
+          # On failure, show the end of the output as an error note on the build page.
+          ./mac/build.sh 2>&1 | tee build.log || { echo "::error title=Mac build::$(tail -n 40 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: KeySwap-mac
