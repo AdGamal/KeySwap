@@ -151,6 +151,8 @@ for word in ["في", "هذه", "هي", "كل", "يوم", "كده", "صغير", "
 let mixed = keys("مرحبا ", on: macArabic.map) + keys("how are you", on: us.map)
 let mixedFix = autoFix(mixed, typedOnArabic: true)
 check(mixedFix?.text == "how are you" && mixedFix?.deleteCount == 11, "auto: fixes only the wrong ending \(String(describing: mixedFix))")
+// Gibberish on both keyboards: leave alone.
+check(autoFix(keys("qzxj", on: us.map), typedOnArabic: false) == nil, "auto: nonsense both ways")
 if onBuildMachine && failures > failuresBeforeSpelling {
     print("::warning::\(failures - failuresBeforeSpelling) spell-checker tests failed on this build machine")
     failures = failuresBeforeSpelling
@@ -158,9 +160,8 @@ if onBuildMachine && failures > failuresBeforeSpelling {
 check(AutoFixer.normalizeArabic("أكيد") == AutoFixer.normalizeArabic("اكيد"), "normalize hamza")
 check(AutoFixer.isCommon("Hello", arabic: false) && AutoFixer.isCommon("إلى", arabic: true), "common words")
 
-// Too short, or gibberish on both keyboards: leave alone.
+// Too short: leave alone.
 check(autoFix(keys("hi", on: us.map), typedOnArabic: true) == nil, "auto: 2 letters too short")
-check(autoFix(keys("qzxj", on: us.map), typedOnArabic: false) == nil, "auto: nonsense both ways")
 check(autoFix([], typedOnArabic: false) == nil, "auto: nothing typed")
 
 // The buffer.
