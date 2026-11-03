@@ -1,14 +1,29 @@
 import Cocoa
 import Carbon
 import ServiceManagement
+import os
+
+private let log = Logger(subsystem: "app.keyswap.mac", category: "general")
+
+/// Marks the key presses KeySwap sends itself, so it doesn't mistake them for the user's typing.
+let ownEventMarker: Int64 = 0x4B53_5750
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let detector = DoubleShiftDetector()
+    private let typing = TypingBuffer()
+    private var pauseTimer: Timer?
+    private var cachedPair: (latin: SystemLayout, arabic: SystemLayout)?
     private var monitors: [Any] = []
     private var trustTimer: Timer?
     private var busy = false
     private let defaults = UserDefaults.standard
+    private let pauseBeforeAutoFix = 0.6
+
+    private var autoFix: Bool {
+        get { defaults.object(forKey: "autoFix") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "autoFix") }
+    }
 
     private var enabled: Bool {
         get { defaults.object(forKey: "enabled") as? Bool ?? true }
@@ -20,6 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Only one KeySwap at a time (opening it again, or Open at Login, must not start a second one
+        // that would fix the same words twice).
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        if running.contains(where: { $0 != NSRunningApplication.current }) {
+            log.notice("already running, quitting this copy")
+            NSApp.terminate(nil)
+            return
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "ع⇄A"
         statusItem.button?.toolTip = "KeySwap: double-tap Shift to fix text typed in the wrong language"
@@ -32,6 +56,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.fixSelection()
         }
 
+        // Start at login by default, once; the user can turn it off from the menu.
+        if #available(macOS 13.0, *), defaults.object(forKey: "loginItemConfigured") == nil {
+            defaults.set(true, forKey: "loginItemConfigured")
+            try? SMAppService.mainApp.register()
+        }
+
+        // Typing in another app, or adding/switching keyboards, starts fresh.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in self?.typing.reset() }
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
+            object: nil, queue: .main) { [weak self] _ in self?.cachedPair = nil }
+
+        log.notice("started, accessibility trusted: \(AXIsProcessTrusted(), privacy: .public)")
         if AXIsProcessTrusted() {
             installMonitors()
         } else {
@@ -41,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             trustTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] timer in
                 guard AXIsProcessTrusted() else { return }
                 timer.invalidate()
+                log.notice("accessibility granted, listening now")
                 self?.installMonitors()
             }
         }
@@ -61,6 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handle(_ event: NSEvent) {
+        if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == ownEventMarker { return }
+        if event.type == .keyDown { trackTyping(event) }
+        if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown {
+            typing.reset() // a click may move the cursor
+        }
         guard event.type == .flagsChanged else { detector.otherInput(); return }
         let leftShift: UInt16 = 56, rightShift: UInt16 = 60
         guard event.keyCode == leftShift || event.keyCode == rightShift else { detector.otherInput(); return }
@@ -70,6 +114,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                        at: event.timestamp)
     }
 
+    // MARK: Fixing while typing
+
+    private func pair() -> (latin: SystemLayout, arabic: SystemLayout)? {
+        if cachedPair == nil { cachedPair = Layouts.pair() }
+        return cachedPair
+    }
+
+    private func trackTyping(_ event: NSEvent) {
+        pauseTimer?.invalidate()
+        guard enabled, autoFix else { typing.reset(); return }
+        let flags = event.modifierFlags
+        let code = event.keyCode
+        let space: UInt16 = 49, backspace: UInt16 = 51
+        guard flags.intersection([.command, .control, .option, .capsLock, .function]).isEmpty,
+              let layoutID = Layouts.currentLayoutID(), let pair = pair(),
+              layoutID == pair.latin.id || layoutID == pair.arabic.id else {
+            log.debug("key ignored: flags \(flags.rawValue, privacy: .public) layout \(Layouts.currentLayoutID() ?? "-", privacy: .public) pair \(self.pair() != nil, privacy: .public)")
+            typing.reset() // shortcuts, arrows and other keyboards end the run
+            return
+        }
+        let map = layoutID == pair.arabic.id ? pair.arabic.map : pair.latin.map
+        let stroke = KeyStroke(key: Int(code), shift: flags.contains(.shift))
+        if code == backspace {
+            typing.backspace { map.output[$0]?.utf16.count ?? 0 }
+        } else if code == space {
+            typing.add(.space, layoutID: layoutID)
+        } else if map.output[stroke] != nil {
+            typing.add(.key(stroke), layoutID: layoutID)
+        } else {
+            typing.reset() // Return, Tab, arrows, Escape...
+            return
+        }
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: pauseBeforeAutoFix, repeats: false) { [weak self] _ in
+            self?.fixWhileTyping()
+        }
+    }
+
+    private func fixWhileTyping() {
+        guard !busy, enabled, autoFix, !IsSecureEventInputEnabled(), // never in password fields
+              let pair = pair(), let layoutID = typing.layoutID else { return }
+        let onArabic = layoutID == pair.arabic.id
+        let current = onArabic ? pair.arabic : pair.latin
+        let other = onArabic ? pair.latin : pair.arabic
+        guard let languages = spellLanguages(latin: pair.latin) else {
+            log.notice("no spell checker for both languages")
+            return
+        }
+        let spell = NSSpellChecker.shared
+        let fix = AutoFixer.decide(typing.items, current: current.map, other: other.map, currentIsArabic: onArabic) { word, arabic in
+            spell.checkSpelling(of: word, startingAt: 0, language: arabic ? languages.arabic : languages.latin,
+                                wrap: false, inSpellDocumentWithTag: 0, wordCount: nil).location == NSNotFound
+        }
+        log.notice("pause: \(self.typing.items.count, privacy: .public) keys on \(onArabic ? "Arabic" : "Latin", privacy: .public), fix: \(fix != nil, privacy: .public)")
+        guard let fix else { return }
+        typing.reset()
+        for _ in 0..<fix.deleteCount { postKey(CGKeyCode(kVK_Delete), flags: []) }
+        typeText(fix.text)
+        other.select()
+    }
+
+    /// The spell checker languages for both keyboards, or nil if the Mac can't check one of them
+    /// (then auto-fix stays off rather than guessing).
+    private func spellLanguages(latin: SystemLayout) -> (latin: String, arabic: String)? {
+        let available = NSSpellChecker.shared.availableLanguages
+        func pick(_ language: String) -> String? {
+            available.first { $0 == language } ?? available.first { $0.hasPrefix(language) }
+        }
+        guard let arabic = pick("ar"), let latinLanguage = pick(latin.language ?? "en") ?? pick("en") else { return nil }
+        return (latinLanguage, arabic)
+    }
+
+    private func typeText(_ text: String) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        for character in text {
+            let units = Array(String(character).utf16)
+            for isDown in [true, false] {
+                guard let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: isDown) else { continue }
+                event.flags = []
+                event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+                event.setIntegerValueField(.eventSourceUserData, value: ownEventMarker)
+                event.post(tap: .cghidEventTap)
+            }
+            usleep(1000) // keep the letters in order in slower apps
+        }
+    }
+
     // MARK: Fixing the selected text
 
     @objc private func fixSelection() {
@@ -77,6 +207,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard AXIsProcessTrusted() else { showPermissionHelp(); return }
         guard let pair = Layouts.pair() else { showLayoutHelp(); return }
         busy = true
+        typing.reset()
+        pauseTimer?.invalidate()
 
         let pasteboard = NSPasteboard.general
         let saved = savePasteboard(pasteboard)
@@ -107,11 +239,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func postShortcut(key: CGKeyCode) {
+    private func postShortcut(key: CGKeyCode) { postKey(key, flags: .maskCommand) }
+
+    private func postKey(_ key: CGKeyCode, flags: CGEventFlags) {
         let source = CGEventSource(stateID: .hidSystemState)
         for isDown in [true, false] {
             let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: isDown)
-            event?.flags = .maskCommand
+            event?.flags = flags
+            event?.setIntegerValueField(.eventSourceUserData, value: ownEventMarker)
             event?.post(tap: .cghidEventTap)
         }
     }
@@ -154,6 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Fix Selected Text Now", #selector(fixSelection)))
         menu.addItem(.separator())
         menu.addItem(item("Enabled", #selector(toggleEnabled), on: enabled))
+        menu.addItem(item("Fix While Typing (after a short pause)", #selector(toggleAutoFix), on: autoFix))
         menu.addItem(item("Switch Keyboard After Fixing", #selector(toggleSwitch), on: switchKeyboard))
         if #available(macOS 13.0, *) {
             menu.addItem(item("Open at Login", #selector(toggleLogin), on: SMAppService.mainApp.status == .enabled))
@@ -182,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleEnabled() { enabled.toggle() }
     @objc private func toggleSwitch() { switchKeyboard.toggle() }
+    @objc private func toggleAutoFix() { autoFix.toggle(); typing.reset() }
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func toggleLogin() {

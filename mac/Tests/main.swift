@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 var failures = 0
 var passes = 0
@@ -98,6 +99,72 @@ check(taps([("down", 0), ("up", 0.08), ("key", 0.1), ("down", 0.2), ("up", 0.28)
 check(taps([("down", 0), ("up", 0.08), ("cmd", 0.15), ("down", 0.2), ("up", 0.28)]) == 0, "with Cmd")
 check(taps([("down", 0), ("down", 0.03), ("up", 0.08), ("down", 0.2), ("down", 0.22), ("up", 0.28)]) == 1, "key repeat ignored")
 check(taps([("down", 0), ("up", 0.08), ("down", 0.2), ("up", 0.28), ("down", 0.4), ("up", 0.48)]) == 1, "triple is one")
+
+// MARK: Fixing while typing
+
+/// The keys you'd press to type `text` on `map`.
+func keys(_ text: String, on map: KeyMap) -> [Typed] {
+    text.map { ch in ch == " " ? .space : .key(map.reverse[String(ch)]!) }
+}
+
+let spell = NSSpellChecker.shared
+func spelledRight(_ word: String, _ arabic: Bool) -> Bool {
+    spell.checkSpelling(of: word, startingAt: 0, language: arabic ? "ar" : "en", wrap: false,
+                        inSpellDocumentWithTag: 0, wordCount: nil).location == NSNotFound
+}
+
+func autoFix(_ typed: [Typed], typedOnArabic: Bool) -> AutoFix? {
+    typedOnArabic
+        ? AutoFixer.decide(typed, current: macArabic.map, other: us.map, currentIsArabic: true, isCorrect: spelledRight)
+        : AutoFixer.decide(typed, current: us.map, other: macArabic.map, currentIsArabic: false, isCorrect: spelledRight)
+}
+
+// Meant Arabic, typed on the English keyboard.
+check(autoFix(keys("مرحبا", on: macArabic.map), typedOnArabic: false) == AutoFix(deleteCount: 5, text: "مرحبا"), "auto: مرحبا")
+check(autoFix(keys("كيف الحال", on: macArabic.map), typedOnArabic: false)?.text == "كيف الحال", "auto: كيف الحال")
+// Meant English, typed on the Arabic keyboard.
+check(autoFix(keys("hello world", on: us.map), typedOnArabic: true) == AutoFix(deleteCount: 11, text: "hello world"), "auto: hello world")
+check(autoFix(keys("how are you ", on: us.map), typedOnArabic: true)?.text == "how are you ", "auto: trailing space")
+// Typed correctly: leave alone.
+for word in ["hello", "ok", "the", "thanks", "hello world", "KeySwap"] {
+    check(autoFix(keys(word, on: us.map), typedOnArabic: false) == nil, "auto: leaves English \(word)")
+}
+for word in ["مرحبا", "كيف الحال", "شكرا", "نعم"] {
+    check(autoFix(keys(word, on: macArabic.map), typedOnArabic: true) == nil, "auto: leaves Arabic \(word)")
+}
+// English on the Arabic keyboard that happens to spell real Arabic (اخص, شري, فاشف...).
+for word in ["how", "and", "that", "know", "just", "who", "how are you", "and then", "what is that"] {
+    check(autoFix(keys(word, on: us.map), typedOnArabic: true)?.text == word, "auto: \(word) typed on Arabic")
+}
+// Real Arabic whose English-keyboard letters spell junk the English checker accepts (td, ici, wydn...).
+for word in ["في", "هذه", "هي", "كل", "يوم", "كده", "صغير", "جديد", "حب", "عن", "ثم"] {
+    check(autoFix(keys(word, on: macArabic.map), typedOnArabic: true) == nil, "auto: leaves Arabic \(word)")
+}
+// Correct words first, then wrong ones: only the wrong ending is fixed.
+let mixed = keys("مرحبا ", on: macArabic.map) + keys("how are you", on: us.map)
+let mixedFix = autoFix(mixed, typedOnArabic: true)
+check(mixedFix?.text == "how are you" && mixedFix?.deleteCount == 11, "auto: fixes only the wrong ending \(String(describing: mixedFix))")
+check(AutoFixer.normalizeArabic("أكيد") == AutoFixer.normalizeArabic("اكيد"), "normalize hamza")
+check(AutoFixer.isCommon("Hello", arabic: false) && AutoFixer.isCommon("إلى", arabic: true), "common words")
+
+// Too short, or gibberish on both keyboards: leave alone.
+check(autoFix(keys("hi", on: us.map), typedOnArabic: true) == nil, "auto: 2 letters too short")
+check(autoFix(keys("qzxj", on: us.map), typedOnArabic: false) == nil, "auto: nonsense both ways")
+check(autoFix([], typedOnArabic: false) == nil, "auto: nothing typed")
+
+// The buffer.
+let buffer = TypingBuffer()
+buffer.add(.key(KeyStroke(key: 4, shift: false)), layoutID: "us")
+buffer.add(.key(KeyStroke(key: 5, shift: false)), layoutID: "us")
+buffer.backspace { _ in 1 }
+check(buffer.items == [.key(KeyStroke(key: 4, shift: false))], "buffer: backspace")
+buffer.backspace { _ in 2 }
+check(buffer.items.isEmpty && buffer.layoutID == nil, "buffer: backspace over لا starts over")
+buffer.add(.space, layoutID: "us")
+buffer.add(.space, layoutID: "ar")
+check(buffer.items == [.space] && buffer.layoutID == "ar", "buffer: keyboard change starts over")
+for _ in 0..<100 { buffer.add(.key(KeyStroke(key: 1, shift: false)), layoutID: "ar"); buffer.add(.space, layoutID: "ar") }
+check(buffer.items.count <= TypingBuffer.maxItems && buffer.items.count > 0, "buffer: stays small")
 
 print("\(passes) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -11,6 +11,9 @@ namespace KeySwap
     {
         public IntPtr Hkl;
         public string Name;
+        /// <summary>The keyboard's language, like "en-US".</summary>
+        public string Culture;
+        public string Id { get { return Layouts.IdOf(Hkl); } }
         public bool IsArabic;
         public KeyMap Map;
     }
@@ -38,6 +41,10 @@ namespace KeySwap
             codes.Add(0x7D);
             return codes.ToArray();
         }
+
+        public static string IdOf(IntPtr hkl) { return hkl.ToInt64().ToString("X"); }
+
+        public static bool IsTypingScanCode(int sc) { return Array.IndexOf(TypingScanCodes, sc) >= 0; }
 
         public static List<SystemLayout> Enabled()
         {
@@ -72,8 +79,17 @@ namespace KeySwap
             var layout = new SystemLayout();
             layout.Hkl = hkl;
             layout.IsArabic = (langId & 0x3FF) == 0x01;
-            try { layout.Name = CultureInfo.GetCultureInfo(langId).DisplayName; }
-            catch (ArgumentException) { layout.Name = "Keyboard " + langId.ToString("X4"); }
+            try
+            {
+                CultureInfo culture = CultureInfo.GetCultureInfo(langId);
+                layout.Name = culture.DisplayName;
+                layout.Culture = culture.Name;
+            }
+            catch (ArgumentException)
+            {
+                layout.Name = "Keyboard " + langId.ToString("X4");
+                layout.Culture = "en-US";
+            }
             layout.Map = BuildMap(hkl, layout.Name);
             return layout;
         }

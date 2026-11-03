@@ -2,13 +2,16 @@
 
 # KeySwap
 
-Typed in the wrong language? Select the text and **double-tap Shift**. KeySwap retypes it with the other keyboard.
+Typed in the wrong language? KeySwap fixes it **by itself when you pause typing**, or when you select the text and **double-tap Shift**.
 
 | You typed | You meant | After double-tap Shift |
 |---|---|---|
 | `lnpfh` (Mac) / `lvpfh` (Windows) | مرحبا | `مرحبا` |
 | `اثممخ صخقمي` | hello world | `hello world` |
 
+- **Fixes while you type:** pause for a moment and words typed with the wrong keyboard are replaced and the keyboard switches. It only acts when your computer's spell checker says the typed words are wrong and the other-keyboard words are right, and never in password fields.
+- **Double-tap Shift** on selected text to fix anything yourself.
+- Starts by itself when you turn on your computer.
 - Works in every app: browsers, Word, WhatsApp, Slack, Notes, anything you can type in.
 - Detects the direction automatically: Arabic → English or English → Arabic.
 - Switches your keyboard to the right language afterwards, so you can keep typing (you can turn this off).
@@ -28,20 +31,23 @@ Get the latest version from the **Releases** page:
 1. Unzip and drag **KeySwap** into your **Applications** folder.
 2. Open it. macOS will say it can't verify the developer, because the app isn't sold through Apple. Click **Done**, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to KeySwap.
 3. When asked, allow **Accessibility** access (System Settings → Privacy & Security → Accessibility → turn on KeySwap). KeySwap needs it to copy and replace the selected text.
-4. The `A⇄ع` icon appears in the menu bar. Turn on **Open at Login** from its menu if you like.
+4. The `A⇄ع` icon appears in the menu bar. KeySwap now opens by itself when you log in (turn off **Open at Login** in its menu if you don't want that).
+
+**Updating on Mac:** after installing a new version, open System Settings → Privacy & Security → Accessibility, remove KeySwap with **–** and add it again with **+**. macOS treats each new version of a free (unsigned) app as a new app.
 
 ## Install on Windows
 
 1. Download `KeySwap.exe` and double-click it.
 2. Windows SmartScreen may say "Windows protected your PC", because the app isn't signed with a paid certificate. Click **More info → Run anyway**.
-3. The KeySwap icon appears in the system tray (near the clock; it may be under the `^` arrow). Right-click it and turn on **Start with Windows** if you like.
+3. The KeySwap icon appears in the system tray (near the clock; it may be under the `^` arrow). KeySwap now starts by itself with Windows (right-click the icon and turn off **Start with Windows** if you don't want that).
+4. Fixing while typing uses the spell checker built into Windows. If the menu says Arabic spell checking is missing: Settings → Time & language → Language & region → `…` next to Arabic → Language options → install **Basic typing**.
 
 ## Use
 
-1. Select the text you typed in the wrong language (Cmd+A / Ctrl+A to select everything).
-2. Press and release **Shift** twice, quickly.
+- **Just type.** If you typed with the wrong keyboard, pause for a moment: KeySwap replaces the words and switches the keyboard.
+- **Or fix it yourself:** select the text (Cmd+A / Ctrl+A for everything) and press **Shift** twice, quickly.
 
-To undo, press Cmd+Z / Ctrl+Z as usual.
+To undo, press Cmd+Z / Ctrl+Z as usual. Turn off **Fix While Typing** in the menu if you only want the Shift shortcut.
 
 You need both an Arabic and an English keyboard added on your computer:
 **Mac:** System Settings → Keyboard → Text Input → Edit.
@@ -58,7 +64,7 @@ You need both an Arabic and an English keyboard added on your computer:
 
 ## بالعربي
 
-كتبت بلغة غلط؟ حدّد النص واضغط **Shift مرتين بسرعة**، وKeySwap يعيد كتابته بالكيبورد الصح.
+كتبت بلغة غلط؟ KeySwap يصلّحها **لوحده لما توقف كتابة لحظة**، أو حدّد النص واضغط **Shift مرتين بسرعة**. وبيشتغل لوحده أول ما تفتح الجهاز.
 
 **على الماك:** فك الضغط عن `KeySwap-mac.zip` وانقل KeySwap لمجلد Applications. افتحه، ولو ظهرت رسالة إن الماك مش قادر يتحقق من المطوّر، روح **System Settings ← Privacy & Security** واضغط **Open Anyway**. بعدها فعّل صلاحية **Accessibility** لـ KeySwap.
 
@@ -71,5 +77,6 @@ You need both an Arabic and an English keyboard added on your computer:
 ## Build it yourself
 
 - **Mac:** `./mac/build.sh` (needs Xcode Command Line Tools). Runs the tests, then makes `mac/build/KeySwap.app` and `KeySwap-mac.zip`.
+- **Word lists:** the everyday words used to judge wrong-keyboard text are in `shared/common-words-*.txt`. After editing them, run `python3 shared/generate-word-lists.py`.
 - **Windows:** double-click `windows\build.bat`. It uses the C# compiler built into Windows, so there's nothing to install. Runs the tests, then makes `windows\build\KeySwap.exe`.
 - **Automatic:** every push to GitHub builds and tests both. Pushing a tag like `v1.0.0` publishes a release with both downloads.

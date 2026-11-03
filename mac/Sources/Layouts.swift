@@ -7,6 +7,8 @@ struct SystemLayout {
     let name: String
     let isArabic: Bool
     let isASCIICapable: Bool
+    /// The layout's main language, like "en" or "ar".
+    let language: String?
     let map: KeyMap
 
     func select() { TISSelectInputSource(source) }
@@ -65,7 +67,7 @@ enum Layouts {
             }
         }
         return SystemLayout(source: source, id: id, name: name,
-                            isArabic: languages.first == "ar", isASCIICapable: ascii,
+                            isArabic: languages.first == "ar", isASCIICapable: ascii, language: languages.first,
                             map: KeyMap(name: name, entries: entries))
     }
 

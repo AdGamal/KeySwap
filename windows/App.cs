@@ -1,10 +1,12 @@
 // KeySwap for Windows: a tray app. Select text typed in the wrong language and double-tap Shift.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Media;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Windows.Automation;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -35,11 +37,19 @@ namespace KeySwap
         readonly Control invoker = new Control();
         readonly DoubleShiftDetector detector = new DoubleShiftDetector();
         readonly KeyboardHook hook;
+        readonly TypingBuffer typing = new TypingBuffer();
+        readonly System.Windows.Forms.Timer pauseTimer = new System.Windows.Forms.Timer();
+        LayoutPair cachedPair;
+        DateTime cachedPairAt;
+        Spelling spelling;
+        IntPtr typingWindow;
         bool busy;
 
         public TrayApp()
         {
             IntPtr unused = invoker.Handle; // create the handle so BeginInvoke works
+            pauseTimer.Interval = 600; // the pause before fixing while typing
+            pauseTimer.Tick += delegate { pauseTimer.Stop(); FixWhileTyping(); };
 
             tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             tray.Text = "KeySwap: double-tap Shift to fix selected text";
@@ -52,15 +62,92 @@ namespace KeySwap
             {
                 if (GetSetting("Enabled", true)) invoker.BeginInvoke(new MethodInvoker(FixSelection));
             };
-            hook = new KeyboardHook(detector);
+            hook = new KeyboardHook(detector, delegate (TypingEvent e)
+            {
+                invoker.BeginInvoke(new MethodInvoker(delegate { OnTyping(e); }));
+            });
             hook.Start();
 
             if (!GetSetting("Welcomed", false))
             {
                 SetSetting("Welcomed", true);
+                SetStartWithWindows(true); // on by default; can be turned off from the menu
                 tray.ShowBalloonTip(8000, "KeySwap is running",
-                    "Select text typed in the wrong language, then double-tap Shift.", ToolTipIcon.Info);
+                    "It fixes words typed with the wrong keyboard when you pause. You can also select text and double-tap Shift.",
+                    ToolTipIcon.Info);
             }
+            else if (StartsWithWindows())
+            {
+                SetStartWithWindows(true); // keep the path right if KeySwap.exe was moved
+            }
+        }
+
+        // MARK: Fixing while typing
+
+        LayoutPair Pair()
+        {
+            if (cachedPair == null || (DateTime.Now - cachedPairAt).TotalSeconds > 10)
+            {
+                cachedPair = Layouts.FindPair();
+                cachedPairAt = DateTime.Now;
+            }
+            return cachedPair;
+        }
+
+        void OnTyping(TypingEvent e)
+        {
+            pauseTimer.Stop();
+            if (busy) return;
+            if (e.Kind == TypingKind.Reset || !GetSetting("Enabled", true) || !GetSetting("AutoFix", true))
+            {
+                typing.Reset();
+                return;
+            }
+            if (e.Window != typingWindow) { typing.Reset(); typingWindow = e.Window; }
+            LayoutPair pair = Pair();
+            if (pair == null) { typing.Reset(); return; }
+            SystemLayout layout = e.LayoutId == pair.Arabic.Id ? pair.Arabic : e.LayoutId == pair.Latin.Id ? pair.Latin : null;
+            if (layout == null) { typing.Reset(); return; } // some other keyboard
+            KeyMap map = layout.Map;
+            switch (e.Kind)
+            {
+                case TypingKind.Backspace:
+                    typing.Backspace(delegate (KeyStroke k) { string s; return map.Output.TryGetValue(k, out s) ? s.Length : 0; });
+                    break;
+                case TypingKind.Space:
+                    typing.Add(Typed.Space(), e.LayoutId);
+                    break;
+                default:
+                    if (!map.Output.ContainsKey(e.Key)) { typing.Reset(); return; }
+                    typing.Add(Typed.Of(e.Key), e.LayoutId);
+                    break;
+            }
+            pauseTimer.Start();
+        }
+
+        void FixWhileTyping()
+        {
+            if (busy || typing.LayoutId == null || !GetSetting("Enabled", true) || !GetSetting("AutoFix", true)) return;
+            LayoutPair pair = Pair();
+            if (pair == null) return;
+            bool onArabic = typing.LayoutId == pair.Arabic.Id;
+            if (!onArabic && typing.LayoutId != pair.Latin.Id) return;
+            Spelling spell = SpellingFor(pair);
+            if (!spell.Available) return;
+            if (!FocusCheck.IsSafeForTyping()) { typing.Reset(); return; } // never in password fields
+            SystemLayout current = onArabic ? pair.Arabic : pair.Latin;
+            SystemLayout other = onArabic ? pair.Latin : pair.Arabic;
+            AutoFix fix = AutoFixer.Decide(typing.Items, current.Map, other.Map, onArabic, spell.IsCorrect);
+            if (fix == null) return;
+            typing.Reset();
+            Input.Replace(fix.DeleteCount, fix.Text);
+            Layouts.Activate(other);
+        }
+
+        Spelling SpellingFor(LayoutPair pair)
+        {
+            if (spelling == null) spelling = new Spelling(pair.Latin.Culture);
+            return spelling;
         }
 
         // MARK: Fixing the selected text
@@ -71,6 +158,8 @@ namespace KeySwap
             LayoutPair pair = Layouts.FindPair();
             if (pair == null) { ShowLayoutHelp(); return; }
             busy = true;
+            typing.Reset();
+            pauseTimer.Stop();
             try
             {
                 DataObject saved = SaveClipboard();
@@ -194,6 +283,8 @@ namespace KeySwap
             items.Add(header);
             items.Add(new ToolStripSeparator());
             items.Add(Toggle("Enabled", GetSetting("Enabled", true), delegate { SetSetting("Enabled", !GetSetting("Enabled", true)); }));
+            items.Add(Toggle("Fix while typing (after a short pause)", GetSetting("AutoFix", true),
+                delegate { SetSetting("AutoFix", !GetSetting("AutoFix", true)); typing.Reset(); }));
             items.Add(Toggle("Switch keyboard after fixing", GetSetting("SwitchKeyboard", true),
                 delegate { SetSetting("SwitchKeyboard", !GetSetting("SwitchKeyboard", true)); }));
             items.Add(Toggle("Start with Windows", StartsWithWindows(), delegate { SetStartWithWindows(!StartsWithWindows()); }));
@@ -204,6 +295,11 @@ namespace KeySwap
                 var info = new ToolStripMenuItem("Keyboards: " + pair.Latin.Name + " ⇄ " + pair.Arabic.Name);
                 info.Enabled = false;
                 items.Add(info);
+                if (!SpellingFor(pair).Available)
+                {
+                    items.Add(new ToolStripMenuItem("⚠ Fixing while typing needs Arabic and English spell checking…", null,
+                        delegate { ShowSpellingHelp(); }));
+                }
             }
             else
             {
@@ -226,6 +322,16 @@ namespace KeySwap
             MessageBox.Show("KeySwap converts between your Arabic keyboard and your English keyboard.\n\n" +
                 "Open Settings → Time & language → Language & region, and add Arabic (with its keyboard) " +
                 "next to English.", "KeySwap: add both keyboards", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            try { Process.Start("ms-settings:regionlanguage"); } catch (Exception) { }
+        }
+
+        void ShowSpellingHelp()
+        {
+            MessageBox.Show("To fix words while you type, KeySwap uses the spell checker built into Windows to tell " +
+                "real words from wrong-keyboard text.\n\nOpen Settings → Time & language → Language & region, click " +
+                "\"…\" next to Arabic (and English) → Language options, and install \"Basic typing\". Then restart KeySwap.\n\n" +
+                "Double-tap Shift on selected text works without it.",
+                "KeySwap: spell checking", MessageBoxButtons.OK, MessageBoxIcon.Information);
             try { Process.Start("ms-settings:regionlanguage"); } catch (Exception) { }
         }
 
@@ -273,22 +379,38 @@ namespace KeySwap
         static extern uint GetClipboardSequenceNumber();
     }
 
+    enum TypingKind { Key, Space, Backspace, Reset }
+
+    /// <summary>One key press the user made, as seen by the hook, for fixing while typing.</summary>
+    class TypingEvent
+    {
+        public TypingKind Kind;
+        public KeyStroke Key;
+        public string LayoutId;
+        public IntPtr Window;
+    }
+
     /// <summary>
-    /// Watches Shift presses system-wide. Runs on its own thread so the hook never waits on the
-    /// clipboard work, which would make Windows delay every key press.
+    /// Watches key presses and clicks system-wide. Runs on its own thread so the hook never waits on
+    /// the clipboard work, which would make Windows delay every key press.
     /// </summary>
     class KeyboardHook
     {
         readonly DoubleShiftDetector detector;
-        readonly HookProc proc; // kept in a field so the garbage collector doesn't free the callback
+        readonly Action<TypingEvent> onTyping;
+        readonly HookProc proc; // kept in fields so the garbage collector doesn't free the callbacks
+        readonly HookProc mouseProc;
         IntPtr handle;
+        IntPtr mouseHandle;
         Thread thread;
         uint threadId;
 
-        public KeyboardHook(DoubleShiftDetector detector)
+        public KeyboardHook(DoubleShiftDetector detector, Action<TypingEvent> onTyping)
         {
             this.detector = detector;
+            this.onTyping = onTyping;
             proc = Callback;
+            mouseProc = MouseCallback;
         }
 
         public void Start()
@@ -297,8 +419,10 @@ namespace KeySwap
             {
                 threadId = GetCurrentThreadId();
                 handle = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
-                Application.Run(); // message loop for the hook
+                mouseHandle = SetWindowsHookEx(WH_MOUSE_LL, mouseProc, GetModuleHandle(null), 0);
+                Application.Run(); // message loop for the hooks
                 if (handle != IntPtr.Zero) UnhookWindowsHookEx(handle);
+                if (mouseHandle != IntPtr.Zero) UnhookWindowsHookEx(mouseHandle);
             });
             thread.IsBackground = true;
             thread.Start();
@@ -327,14 +451,58 @@ namespace KeySwap
                     else if (down)
                     {
                         detector.OtherInput();
+                        bool modifier = data.vkCode == VK_CONTROL || data.vkCode == VK_MENU || data.vkCode == VK_LWIN
+                            || data.vkCode == VK_RWIN || (data.vkCode >= 0xA2 && data.vkCode <= 0xA5);
+                        if (!modifier) onTyping(Describe(data));
                     }
                 }
             }
             return CallNextHookEx(handle, nCode, wParam, lParam);
         }
 
+        TypingEvent Describe(KBDLLHOOKSTRUCT data)
+        {
+            var e = new TypingEvent();
+            e.Window = GetForegroundWindow();
+            e.LayoutId = Layouts.IdOf(GetKeyboardLayout(GetWindowThreadProcessId(e.Window, IntPtr.Zero)));
+            bool extended = (data.flags & LLKHF_EXTENDED) != 0;
+            int sc = (int)data.scanCode;
+            bool shortcut = IsDown(VK_CONTROL) || IsDown(VK_MENU) || IsDown(VK_LWIN) || IsDown(VK_RWIN);
+            bool capsLock = (GetKeyState(VK_CAPITAL) & 1) != 0;
+            if (shortcut || capsLock) e.Kind = TypingKind.Reset;
+            else if (data.vkCode == VK_BACK) e.Kind = TypingKind.Backspace;
+            else if (!extended && sc == SC_SPACE) e.Kind = TypingKind.Space;
+            else if (!extended && Layouts.IsTypingScanCode(sc))
+            {
+                e.Kind = TypingKind.Key;
+                e.Key = new KeyStroke(sc, IsDown((int)VK_SHIFT));
+            }
+            else e.Kind = TypingKind.Reset; // Enter, Tab, arrows, Escape...
+            return e;
+        }
+
+        IntPtr MouseCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            int msg = wParam.ToInt32();
+            if (nCode >= 0 && (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN))
+            {
+                var e = new TypingEvent();
+                e.Kind = TypingKind.Reset; // a click may move the cursor
+                onTyping(e);
+            }
+            return CallNextHookEx(mouseHandle, nCode, wParam, lParam);
+        }
+
         static bool IsDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
+        const int WH_MOUSE_LL = 14;
+        const int WM_LBUTTONDOWN = 0x0201;
+        const int WM_RBUTTONDOWN = 0x0204;
+        const int WM_MBUTTONDOWN = 0x0207;
+        const uint LLKHF_EXTENDED = 0x01;
+        const uint VK_BACK = 0x08;
+        const int VK_CAPITAL = 0x14;
+        const int SC_SPACE = 0x39;
         const int WH_KEYBOARD_LL = 13;
         const int WM_KEYDOWN = 0x0100;
         const int WM_SYSKEYDOWN = 0x0104;
@@ -373,6 +541,18 @@ namespace KeySwap
         static extern short GetAsyncKeyState(int vKey);
 
         [DllImport("user32.dll")]
+        static extern short GetKeyState(int nVirtKey);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetKeyboardLayout(uint idThread);
+
+        [DllImport("user32.dll")]
         static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -390,6 +570,8 @@ namespace KeySwap
         const ushort VK_CONTROL = 0x11;
         const uint INPUT_KEYBOARD = 1;
         const uint KEYEVENTF_KEYUP = 0x0002;
+        const uint KEYEVENTF_UNICODE = 0x0004;
+        const ushort VK_BACK = 0x08;
 
         public static void SendCtrl(ushort vk)
         {
@@ -398,6 +580,36 @@ namespace KeySwap
                 Key(VK_CONTROL, false), Key(vk, false), Key(vk, true), Key(VK_CONTROL, true)
             };
             SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        /// <summary>
+        /// Deletes the wrong letters and types the right ones in a single SendInput call, which Windows
+        /// delivers in one piece, so keys the user presses meanwhile can't land in the middle.
+        /// </summary>
+        public static void Replace(int deleteCount, string text)
+        {
+            var inputs = new List<INPUT>();
+            for (int i = 0; i < deleteCount; i++)
+            {
+                inputs.Add(Key(VK_BACK, false));
+                inputs.Add(Key(VK_BACK, true));
+            }
+            foreach (char c in text)
+            {
+                inputs.Add(Unicode(c, false));
+                inputs.Add(Unicode(c, true));
+            }
+            INPUT[] all = inputs.ToArray();
+            SendInput((uint)all.Length, all, Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        static INPUT Unicode(char c, bool up)
+        {
+            var input = new INPUT();
+            input.type = INPUT_KEYBOARD;
+            input.u.ki.wScan = c;
+            input.u.ki.dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0);
+            return input;
         }
 
         static INPUT Key(ushort vk, bool up)
@@ -447,5 +659,22 @@ namespace KeySwap
 
         [DllImport("user32.dll", SetLastError = true)]
         static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    }
+}
+
+namespace KeySwap
+{
+    /// <summary>Checks the text field the user is typing in, so KeySwap never retypes into a password box.</summary>
+    static class FocusCheck
+    {
+        public static bool IsSafeForTyping()
+        {
+            try
+            {
+                AutomationElement focused = AutomationElement.FocusedElement;
+                return focused != null && !focused.Current.IsPassword;
+            }
+            catch (Exception) { return false; } // when unsure, leave the text alone
+        }
     }
 }
