@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Typing in another app, or adding/switching keyboards, starts fresh.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
-                                                          object: nil, queue: .main) { [weak self] _ in self?.typing.reset() }
+                                                          object: nil, queue: .main) { [weak self] _ in self?.resetTyping("app switch") }
         DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
             object: nil, queue: .main) { [weak self] _ in self?.cachedPair = nil }
@@ -103,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == ownEventMarker { return }
         if event.type == .keyDown { trackTyping(event) }
         if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown {
-            typing.reset() // a click may move the cursor
+            resetTyping("click") // a click may move the cursor
         }
         guard event.type == .flagsChanged else { detector.otherInput(); return }
         let leftShift: UInt16 = 56, rightShift: UInt16 = 60
@@ -121,6 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return cachedPair
     }
 
+    private func resetTyping(_ reason: String) {
+        if !typing.items.isEmpty { log.notice("start over (\(reason, privacy: .public)) after \(self.typing.items.count, privacy: .public) keys") }
+        typing.reset()
+    }
+
     private func trackTyping(_ event: NSEvent) {
         pauseTimer?.invalidate()
         guard enabled, autoFix else { typing.reset(); return }
@@ -131,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let layoutID = Layouts.currentLayoutID(), let pair = pair(),
               layoutID == pair.latin.id || layoutID == pair.arabic.id else {
             log.debug("key ignored: flags \(flags.rawValue, privacy: .public) layout \(Layouts.currentLayoutID() ?? "-", privacy: .public) pair \(self.pair() != nil, privacy: .public)")
-            typing.reset() // shortcuts, arrows and other keyboards end the run
+            resetTyping("shortcut or other keyboard") // shortcuts, arrows and other keyboards end the run
             return
         }
         let map = layoutID == pair.arabic.id ? pair.arabic.map : pair.latin.map
@@ -143,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if map.output[stroke] != nil {
             typing.add(.key(stroke), layoutID: layoutID)
         } else {
-            typing.reset() // Return, Tab, arrows, Escape...
+            resetTyping("key \(code)") // Return, Tab, arrows, Escape...
             return
         }
         pauseTimer = Timer.scheduledTimer(withTimeInterval: pauseBeforeAutoFix, repeats: false) { [weak self] _ in
@@ -166,9 +171,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             spell.checkSpelling(of: word, startingAt: 0, language: arabic ? languages.arabic : languages.latin,
                                 wrap: false, inSpellDocumentWithTag: 0, wordCount: nil).location == NSNotFound
         }
-        log.notice("pause: \(self.typing.items.count, privacy: .public) keys on \(onArabic ? "Arabic" : "Latin", privacy: .public), fix: \(fix != nil, privacy: .public)")
+        let words = typing.items.filter { $0 == .space }.count + 1
+        let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-"
+        log.notice("pause: \(self.typing.items.count, privacy: .public) keys, \(words, privacy: .public) words on \(onArabic ? "Arabic" : "Latin", privacy: .public) in \(app, privacy: .public), fix: \(fix.map { "delete \($0.deleteCount), type \($0.text.count)" } ?? "none", privacy: .public)")
         guard let fix else { return }
         typing.reset()
+        // Without permission to send keys the letters can't be retyped; switching the keyboard alone
+        // would only make things worse.
+        guard CGPreflightPostEventAccess() else {
+            log.error("can't send keys: this copy of KeySwap isn't allowed in Accessibility")
+            return
+        }
         for _ in 0..<fix.deleteCount { postKey(CGKeyCode(kVK_Delete), flags: []) }
         typeText(fix.text)
         other.select()
@@ -204,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func fixSelection() {
         guard !busy else { return }
-        guard AXIsProcessTrusted() else { showPermissionHelp(); return }
+        guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else { showPermissionHelp(); return }
         guard let pair = Layouts.pair() else { showLayoutHelp(); return }
         busy = true
         typing.reset()
@@ -302,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             menu.addItem(item("⚠︎ Add an Arabic and an English keyboard…", #selector(showLayoutHelp)))
         }
-        if !AXIsProcessTrusted() {
+        if !AXIsProcessTrusted() || !CGPreflightPostEventAccess() {
             menu.addItem(item("⚠︎ Allow Accessibility Access…", #selector(showPermissionHelp)))
         }
         menu.addItem(.separator())
