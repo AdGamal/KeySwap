@@ -77,6 +77,6 @@ You need both an Arabic and an English keyboard added on your computer:
 ## Build it yourself
 
 - **Mac:** `./mac/build.sh` (needs Xcode Command Line Tools). Runs the tests, then makes `mac/build/KeySwap.app` and `KeySwap-mac.zip`.
-- **Word lists:** the everyday words used to judge wrong-keyboard text are in `shared/common-words-*.txt`. After editing them, run `python3 shared/generate-word-lists.py`.
+- **Word lists:** the everyday words used to judge wrong-keyboard text are in `shared/common-words-*.txt`, and English chat shortcuts that are never converted (lol, brb, tmr…) are in `shared/english-shortcuts.txt`. After editing them, run `python3 shared/generate-word-lists.py`.
 - **Windows:** double-click `windows\build.bat`. It uses the C# compiler built into Windows, so there's nothing to install. Runs the tests, then makes `windows\build\KeySwap.exe`.
 - **Automatic:** every push to GitHub builds and tests both. Pushing a tag like `v1.0.0` publishes a release with both downloads.

@@ -53,6 +53,7 @@ enum AutoFixer {
     /// Spell checkers accept many short letter mixes (about a quarter of common English words typed on
     /// the Arabic keyboard spell real Arabic), so everyday words count more than the spell checker:
     /// a common word as typed is never "wrong", and a common word on the other keyboard is strong proof.
+    /// English shortcuts and capitals typed on the English keyboard are never "wrong" either.
     /// Only the trailing words are fixed, starting at the first word that's wrong as typed; there must be
     /// at least 3 letters, every fixed word must be right on the other keyboard, and at least half of them
     /// wrong as typed.
@@ -104,12 +105,22 @@ enum AutoFixer {
         j.meantIsRight = meantCommon || isCorrect(meantCore, !currentIsArabic)
         let typedCore = lettersCore(typed)
         let typedLooksRight = !typedCore.isEmpty
-            && (isCommon(typedCore, arabic: currentIsArabic) || (!meantCommon && isCorrect(typedCore, currentIsArabic)))
+            && (isCommon(typedCore, arabic: currentIsArabic)
+                || (!currentIsArabic && looksLikeEnglishShortcut(typedCore))
+                || (!meantCommon && isCorrect(typedCore, currentIsArabic)))
         j.wrongAsTyped = !typedLooksRight
         return j
     }
 
     static let commonArabic = Set(CommonWords.arabic.map(normalizeArabic))
+
+    /// Chat shortcuts (lol, brb, tmr...) and words in capitals (OK, ASAP) are English on purpose, even
+    /// when the spell checker doesn't know them and their letters happen to spell Arabic.
+    static func looksLikeEnglishShortcut(_ word: String) -> Bool {
+        if CommonWords.englishShortcuts.contains(word.lowercased()) { return true }
+        let letters = word.unicodeScalars.filter { $0.properties.isAlphabetic }
+        return letters.count >= 2 && letters.allSatisfy { ("A"..."Z").contains($0) }
+    }
 
     static func isCommon(_ word: String, arabic: Bool) -> Bool {
         arabic ? commonArabic.contains(normalizeArabic(word)) : CommonWords.english.contains(word.lowercased())

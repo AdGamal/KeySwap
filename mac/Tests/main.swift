@@ -136,6 +136,12 @@ check(autoFix(keys("how are you ", on: us.map), typedOnArabic: true)?.text == "h
 for word in ["hello", "ok", "the", "thanks", "hello world", "KeySwap"] {
     check(autoFix(keys(word, on: us.map), typedOnArabic: false) == nil, "auto: leaves English \(word)")
 }
+// English shortcuts and capitals stay English, even the ones whose letters spell Arabic (tmr → فوق)...
+for word in ["tmr", "hmu", "tnx", "dms", "okk", "ftw", "lol", "brb", "idk", "ASAP", "OK", "lol ok"] {
+    check(autoFix(keys(word, on: us.map), typedOnArabic: false) == nil, "auto: leaves shortcut \(word)")
+}
+// ...but inside an Arabic sentence typed on the English keyboard they are fixed with it.
+check(autoFix(keys("انا فوق", on: macArabic.map), typedOnArabic: false)?.text == "انا فوق", "auto: انا فوق (tmr) fixed in a sentence")
 for word in ["مرحبا", "كيف الحال", "شكرا", "نعم"] {
     check(autoFix(keys(word, on: macArabic.map), typedOnArabic: true) == nil, "auto: leaves Arabic \(word)")
 }

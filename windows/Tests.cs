@@ -121,6 +121,12 @@ namespace KeySwap
             // Common Arabic typed right is never touched, even if its English letters look like a word.
             Func<string, bool, bool> everything = delegate (string w, bool ar) { return true; };
             Check(AutoFixer.Decide(Keys("في", arabic), arabic, latin, true, everything) == null, "auto: leaves في");
+            // English shortcuts and capitals stay English even when their letters spell Arabic...
+            foreach (string w in new[] { "tmr", "hmu", "lol", "brb", "ASAP", "OK" })
+                Check(AutoFixer.Decide(Keys(w, latin), latin, arabic, false, lenient) == null, "auto: leaves shortcut " + w);
+            // ...but inside an Arabic sentence typed on the English keyboard they are fixed with it.
+            fix = AutoFixer.Decide(Keys("hkh tmr", latin), latin, arabic, false, lenient);
+            Check(fix != null && fix.DeleteCount == 7, "auto: shortcut inside a wrong sentence is fixed");
             // Correct words first, then wrong ones: only the wrong ending is fixed.
             var mixed = Keys("مرحبا ", arabic);
             mixed.AddRange(Keys("how are you", latin));

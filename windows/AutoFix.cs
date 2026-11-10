@@ -82,6 +82,7 @@ namespace KeySwap
         /// Spell checkers accept many short letter mixes (about a quarter of common English words typed on
         /// the Arabic keyboard spell real Arabic), so everyday words count more than the spell checker: a
         /// common word as typed is never "wrong", and a common word on the other keyboard is strong proof.
+        /// English shortcuts and capitals typed on the English keyboard are never "wrong" either.
         /// Only the trailing words are fixed, starting at the first word that's wrong as typed; there must be
         /// at least 3 letters, every fixed word must be right on the other keyboard, and at least half of
         /// them wrong as typed.
@@ -163,7 +164,9 @@ namespace KeySwap
             j.MeantIsRight = meantCommon || isCorrect(meantCore, !currentIsArabic);
             string typedCore = LettersCore(typed);
             bool typedLooksRight = typedCore.Length > 0
-                && (IsCommon(typedCore, currentIsArabic) || (!meantCommon && isCorrect(typedCore, currentIsArabic)));
+                && (IsCommon(typedCore, currentIsArabic)
+                    || (!currentIsArabic && LooksLikeEnglishShortcut(typedCore))
+                    || (!meantCommon && isCorrect(typedCore, currentIsArabic)));
             j.WrongAsTyped = !typedLooksRight;
             return j;
         }
@@ -176,6 +179,25 @@ namespace KeySwap
             var set = new HashSet<string>(StringComparer.Ordinal);
             foreach (string w in CommonWords.Arabic) set.Add(NormalizeArabic(w));
             return set;
+        }
+
+        static readonly HashSet<string> Shortcuts = new HashSet<string>(CommonWords.EnglishShortcuts, StringComparer.Ordinal);
+
+        /// <summary>
+        /// Chat shortcuts (lol, brb, tmr...) and words in capitals (OK, ASAP) are English on purpose, even
+        /// when the spell checker doesn't know them and their letters happen to spell Arabic.
+        /// </summary>
+        public static bool LooksLikeEnglishShortcut(string word)
+        {
+            if (Shortcuts.Contains(word.ToLowerInvariant())) return true;
+            int letters = 0;
+            foreach (char c in word)
+            {
+                if (!char.IsLetter(c)) continue;
+                if (c < 'A' || c > 'Z') return false;
+                letters++;
+            }
+            return letters >= 2;
         }
 
         public static bool IsCommon(string word, bool arabic)

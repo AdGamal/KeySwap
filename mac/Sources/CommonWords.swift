@@ -42,4 +42,21 @@ enum CommonWords {
         "نريد", "نعم", "نوم", "هات", "هذا", "هذه", "هم", "هن", "هنا", "هناك", "هو", "هي", "هيكون", "واحد",
         "والله", "وعليكم", "وقت", "يا", "ياريت", "يريد", "يعني", "يقول", "يكون", "يوم"
     ]
+    /// Chat shortcuts and names (lol, brb, tmr...): English as typed, but no proof of anything when meant.
+    static let englishShortcuts: Set<String> = [
+        "afaic", "afaik", "afk", "ai", "aka", "api", "asap", "asl", "atm", "bc", "bcc", "bday", "bf",
+        "bff", "brb", "bro", "bruh", "btw", "cc", "ceo", "coz", "cuz", "cya", "diy", "dm", "dms", "dude",
+        "dunno", "eod", "eow", "eta", "etc", "eu", "ez", "facebook", "fam", "faq", "fomo", "fr", "ftw",
+        "fwd", "fyi", "gf", "gg", "gimme", "github", "gm", "gmail", "gn", "gonna", "google", "gotta",
+        "gps", "haha", "hahaha", "hbd", "hbu", "hehe", "hmm", "hmmm", "hmu", "hr", "hw", "hwu", "idc",
+        "idk", "iirc", "ikr", "ily", "imho", "imo", "instagram", "ios", "iphone", "irl", "jfyi", "jk",
+        "jpg", "kinda", "kk", "lemme", "lit", "lmao", "lmaoo", "lmfao", "lmk", "lol", "lool", "mac", "ml",
+        "mm", "nah", "netflix", "ngl", "noob", "nope", "np", "nsfw", "nvm", "obv", "ofc", "okay", "okk",
+        "omg", "omw", "ooo", "oops", "pc", "pdf", "pfa", "pfb", "pls", "plz", "pm", "png", "pov", "ppl",
+        "re", "rn", "rofl", "sis", "smh", "sorta", "sry", "sup", "sus", "tbf", "tbh", "tho", "thx",
+        "tiktok", "tks", "tldr", "tmr", "tmrw", "tnx", "ttyl", "ty", "ugh", "uhh", "ui", "uk", "umm", "ur",
+        "url", "usa", "ux", "vibe", "vibes", "vs", "wanna", "wassup", "wat", "wbu", "wfh", "whatsapp",
+        "wifi", "wow", "wp", "wtf", "wth", "wut", "wyd", "xd", "xoxo", "ya", "yay", "yea", "yep", "yolo",
+        "youtube", "yup"
+    ]
 }
