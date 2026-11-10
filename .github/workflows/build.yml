@@ -42,12 +42,36 @@ jobs:
     needs: [mac, windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="## $version" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          body_path: notes.md
           files: |
             dist/KeySwap-mac.zip
             dist/KeySwap.exe
+
+  # Keeps the notes of every published release in step with CHANGELOG.md. Only edits releases that
+  # already exist; it never creates one.
+  notes:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for version in $(sed -n 's/^## //p' CHANGELOG.md); do
+            awk -v v="## $version" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+            if gh release view "v$version" > /dev/null 2>&1; then
+              gh release edit "v$version" --notes-file notes.md
+            fi
+          done
