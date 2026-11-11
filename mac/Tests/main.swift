@@ -159,6 +159,51 @@ let mixedFix = autoFix(mixed, typedOnArabic: true)
 check(mixedFix?.text == "how are you" && mixedFix?.deleteCount == 11, "auto: fixes only the wrong ending \(String(describing: mixedFix))")
 // Gibberish on both keyboards: leave alone.
 check(autoFix(keys("qzxj", on: us.map), typedOnArabic: false) == nil, "auto: nonsense both ways")
+// A pause in the middle of an English word must not turn it into Arabic (hel → اثم, tomo → فخوخ).
+for word in ["hel", "mon", "tomo", "wond", "tha", "Tik", "didn'", "ok hel", "see you tomo"] {
+    check(autoFix(keys(word, on: us.map), typedOnArabic: false) == nil, "auto: half-typed English \(word)")
+}
+// Arabic letters on English punctuation keys (ك is ;  ج is [  ز is .) are not English words.
+for word in ["ازيك يا صاحبي", "كلمة السر", "سجل الدخول", "يجب علينا العمل", "الجو حلو"] {
+    check(autoFix(keys(word, on: macArabic.map), typedOnArabic: false)?.text == word, "auto: \(word) typed on English")
+}
+// A name, typo or shortcut at the start is fixed with the rest; days need no capital.
+for sentence in ["ahmed is meeting omar", "pls send me the file", "idk what to do", "definately going to the gym",
+                 "turn off the lights", "what time is the meeting on monday", "he's not answering"] {
+    check(autoFix(keys(sentence, on: us.map), typedOnArabic: true)?.text == sentence, "auto: \(sentence) typed on Arabic")
+}
+// Real Arabic that happens to spell English (بعته is "fuji") is not proof by itself.
+check(autoFix(keys("بعته", on: macArabic.map), typedOnArabic: true) == nil, "auto: leaves بعته")
+
+// Real sentences, at every point where you could pause: text typed on the right keyboard is never
+// changed, and text typed on the wrong one is fixed whole or not at all, never garbled.
+func sentences(_ name: String) -> [String] {
+    (try? String(contentsOfFile: "Tests/corpus/\(name).txt", encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
+}
+for (name, arabic) in [("english", false), ("arabic", true)] {
+    let lines = sentences(name)
+    check(lines.count > 100, "corpus: \(name) sentences found")
+    var wrongSwaps: [String] = [], garbled: [String] = [], wordEnds = 0, fixed = 0
+    for line in lines {
+        let chars = Array(line)
+        let right = keys(line, on: arabic ? macArabic.map : us.map)
+        for n in 1...right.count where right[n - 1] != .space {
+            let soFar = Array(right[0..<n])
+            if let fix = autoFix(soFar, typedOnArabic: arabic) { wrongSwaps.append("\(String(chars[0..<n])) → \(fix.text)") }
+            guard n == right.count || right[n] == .space else { continue }
+            wordEnds += 1
+            if let fix = autoFix(soFar, typedOnArabic: !arabic) {
+                if String(chars[0..<n]).hasSuffix(fix.text) { fixed += 1 } else { garbled.append(fix.text) }
+            }
+        }
+    }
+    check(wrongSwaps.isEmpty, "corpus: correct \(name) is never changed \(wrongSwaps.prefix(5))")
+    check(garbled.isEmpty, "corpus: \(name) on the wrong keyboard is never garbled \(garbled.prefix(5))")
+    // English with capitals can't be fixed while typing (Shift types vowel marks on the Arabic keyboard).
+    check(fixed * 100 >= wordEnds * (arabic ? 90 : 70), "corpus: \(name) on the wrong keyboard fixed \(fixed)/\(wordEnds)")
+    print("corpus \(name): fixed \(fixed)/\(wordEnds) when typed on the wrong keyboard, \(wrongSwaps.count) wrong swaps")
+}
+
 if onBuildMachine && failures > failuresBeforeSpelling {
     print("::warning::\(failures - failuresBeforeSpelling) spell-checker tests failed on this build machine")
     failures = failuresBeforeSpelling

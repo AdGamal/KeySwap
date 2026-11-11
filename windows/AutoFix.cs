@@ -77,61 +77,75 @@ namespace KeySwap
     {
         /// <summary>
         /// Decides whether the last words typed were meant for the other keyboard. isCorrect(word, arabic)
-        /// asks the spell checker about one word.
+        /// asks the spell checker about one word. The same rule as mac/Sources/AutoFix.swift:
         ///
-        /// Spell checkers accept many short letter mixes (about a quarter of common English words typed on
-        /// the Arabic keyboard spell real Arabic), so everyday words count more than the spell checker: a
-        /// common word as typed is never "wrong", and a common word on the other keyboard is strong proof.
-        /// English shortcuts and capitals typed on the English keyboard are never "wrong" either.
-        /// Only the trailing words are fixed, starting at the first word that's wrong as typed; there must be
-        /// at least 3 letters, every fixed word must be right on the other keyboard, and at least half of
-        /// them wrong as typed.
+        /// Each word is judged twice: does it look right as typed, and does it look right on the other
+        /// keyboard? Spell checkers, the Arabic ones most of all, accept many letter mixes, so:
+        /// - a common word as typed always looks right, and a common word on the other keyboard is proof;
+        /// - an English word of 4 letters or more against Arabic that is merely accepted is "weak proof":
+        ///   it counts only next to real proof ("turn off the lights": "the" is common, so "turn" counts);
+        /// - English shortcuts and capitals always look right as English;
+        /// - anything with punctuation inside is not English (Arabic letters sit on punctuation keys).
+        ///
+        /// Only the trailing words are fixed, starting at the first word that looks wrong as typed. In that
+        /// run there must be no word that is right as typed and wrong on the other keyboard, at least 3
+        /// letters of proof words (wrong as typed, right on the other keyboard), and at least as many proof
+        /// and weak-proof words as other words that are right both ways, and as words that are wrong both
+        /// ways (names, typos), which are then fixed along with the rest. The run then grows backwards over
+        /// words that are right both ways but not common as typed ("pls" before "send me the file").
+        ///
+        /// A last word with no space after it may still be half-typed: on the English keyboard, if it
+        /// starts like an English word ("hel", "tomo") it proves nothing and is never fixed on its own,
+        /// unless the other keyboard gives a common Arabic word.
         /// </summary>
         public static AutoFix Decide(IList<Typed> typed, KeyMap current, KeyMap other, bool currentIsArabic,
                                      Func<string, bool, bool> isCorrect)
         {
-            var typedWords = new List<StringBuilder> { new StringBuilder() };
-            var meantWords = new List<StringBuilder> { new StringBuilder() };
+            // Per word, what each key types on both keyboards.
+            var words = new List<List<KeyValuePair<string, string>>> { new List<KeyValuePair<string, string>>() };
             foreach (Typed item in typed)
             {
                 if (item.IsSpace)
                 {
-                    typedWords.Add(new StringBuilder());
-                    meantWords.Add(new StringBuilder());
+                    words.Add(new List<KeyValuePair<string, string>>());
                     continue;
                 }
                 string a, b;
                 if (!current.Output.TryGetValue(item.Key, out a) || !other.Output.TryGetValue(item.Key, out b)) return null;
-                typedWords[typedWords.Count - 1].Append(a);
-                meantWords[meantWords.Count - 1].Append(b);
+                words[words.Count - 1].Add(new KeyValuePair<string, string>(a, b));
             }
-            int n = typedWords.Count;
+            int n = words.Count;
             var judged = new Judgement[n];
-            for (int i = 0; i < n; i++)
-                judged[i] = Judge(typedWords[i].ToString(), meantWords[i].ToString(), currentIsArabic, isCorrect);
+            for (int i = 0; i < n; i++) judged[i] = Judge(words[i], currentIsArabic, isCorrect);
+            if (!currentIsArabic && typed.Count > 0 && !typed[typed.Count - 1].IsSpace && !judged[n - 1].MeantIsCommon
+                && CouldBeUnfinishedEnglish(judged[n - 1].Typed ?? ""))
+                judged[n - 1].Unfinished = true;
 
-            for (int start = 0; start < n; start++)
+            for (int first = 0; first < n; first++)
             {
-                if (!judged[start].Checked || !judged[start].WrongAsTyped) continue;
-                int checkedWords = 0, wrong = 0, letters = 0;
-                bool allRight = true;
-                for (int i = start; i < n; i++)
+                if (!judged[first].Checked || judged[first].TypedLooksRight || judged[first].Unfinished) continue;
+                int proof = 0, proofLetters = 0, rightBothWays = 0, wrongBothWays = 0;
+                bool contradicted = false;
+                for (int i = first; i < n; i++)
                 {
-                    if (!judged[i].Checked) continue;
-                    checkedWords++;
-                    letters += judged[i].Letters;
-                    if (judged[i].WrongAsTyped) wrong++;
-                    if (!judged[i].MeantIsRight) allRight = false;
+                    Judgement j = judged[i];
+                    if (!j.Checked || j.Unfinished) continue;
+                    if (!j.TypedLooksRight && j.MeantIsRight) { proof++; proofLetters += j.Letters; }
+                    else if (j.TypedLooksRight && j.MeantIsRight) { if (j.WeakProof) proof++; else rightBothWays++; }
+                    else if (!j.TypedLooksRight) wrongBothWays++;
+                    else contradicted = true;
                 }
-                if (!allRight || letters < 3 || wrong * 2 < checkedWords) continue;
+                if (contradicted || proofLetters < 3 || proof < rightBothWays || proof < wrongBothWays) continue;
+                int start = first;
+                while (start > 0 && judged[start - 1].Checked && judged[start - 1].MeantIsRight && !judged[start - 1].TypedIsCommon)
+                    start--;
 
                 var asTyped = new StringBuilder();
                 var meant = new StringBuilder();
                 for (int i = start; i < n; i++)
                 {
                     if (i > start) { asTyped.Append(' '); meant.Append(' '); }
-                    asTyped.Append(typedWords[i]);
-                    meant.Append(meantWords[i]);
+                    foreach (KeyValuePair<string, string> key in words[i]) { asTyped.Append(key.Key); meant.Append(key.Value); }
                 }
                 string typedText = asTyped.ToString();
                 // Backspace counts are only reliable for plain characters (no vowel marks or emoji).
@@ -148,27 +162,83 @@ namespace KeySwap
         struct Judgement
         {
             public bool Checked;
+            public string Typed;
             public bool MeantIsRight;
-            public bool WrongAsTyped;
+            public bool MeantIsCommon;
+            public bool TypedLooksRight;
+            public bool TypedIsCommon;
+            public bool WeakProof;
+            public bool Unfinished;
             public int Letters;
         }
 
-        static Judgement Judge(string typed, string meant, bool currentIsArabic, Func<string, bool, bool> isCorrect)
+        static bool HasLetter(string text)
+        {
+            foreach (char c in text) if (char.IsLetter(c) || IsCombiningMark(c)) return true;
+            return false;
+        }
+
+        static Judgement Judge(List<KeyValuePair<string, string>> keys, bool currentIsArabic, Func<string, bool, bool> isCorrect)
         {
             var j = new Judgement();
-            string meantCore = LettersCore(meant);
-            if (meantCore.Length == 0) return j; // punctuation or digits only
+            // The word without the punctuation around it: "(hello!" → "hello". A key counts as part of the
+            // word if it types a letter on either keyboard, so ";glm" stays whole (it is كلمة).
+            int first = -1, last = -1;
+            for (int i = 0; i < keys.Count; i++)
+            {
+                if (!HasLetter(keys[i].Key) && !HasLetter(keys[i].Value)) continue;
+                if (first < 0) first = i;
+                last = i;
+            }
+            if (first < 0) return j;
+            var typedBuilder = new StringBuilder();
+            var meantBuilder = new StringBuilder();
+            for (int i = first; i <= last; i++) { typedBuilder.Append(keys[i].Key); meantBuilder.Append(keys[i].Value); }
+            string typed = typedBuilder.ToString(), meant = meantBuilder.ToString();
+            j.Typed = typed;
+            if (!HasLetter(meant)) return j; // 5% → ٥٪
+
             j.Checked = true;
-            j.Letters = meantCore.Length;
-            bool meantCommon = IsCommon(meantCore, !currentIsArabic);
-            j.MeantIsRight = meantCommon || isCorrect(meantCore, !currentIsArabic);
-            string typedCore = LettersCore(typed);
-            bool typedLooksRight = typedCore.Length > 0
-                && (IsCommon(typedCore, currentIsArabic)
-                    || (!currentIsArabic && LooksLikeEnglishShortcut(typedCore))
-                    || (!meantCommon && isCorrect(typedCore, currentIsArabic)));
-            j.WrongAsTyped = !typedLooksRight;
+            foreach (char c in meant) if (char.IsLetter(c)) j.Letters++;
+            j.MeantIsCommon = IsCommon(meant, !currentIsArabic);
+            j.MeantIsRight = j.MeantIsCommon || LooksRight(meant, !currentIsArabic, isCorrect);
+            j.TypedIsCommon = IsCommon(typed, currentIsArabic);
+            j.TypedLooksRight = j.TypedIsCommon || (!j.MeantIsCommon && LooksRight(typed, currentIsArabic, isCorrect));
+            // The Arabic checker accepts so much that a real English word of 4+ letters outweighs it, but
+            // only as support: real Arabic can spell English too.
+            j.WeakProof = currentIsArabic && !j.TypedIsCommon && j.TypedLooksRight && j.Letters >= 4 && isCorrect(meant, false);
             return j;
+        }
+
+        /// <summary>One word in one language, by more than the spell checker alone.</summary>
+        static bool LooksRight(string word, bool arabic, Func<string, bool, bool> isCorrect)
+        {
+            if (!HasLetter(word)) return false;
+            if (arabic)
+            {
+                // Shift on the Arabic keyboard types vowel marks, so English capitals become marks in odd
+                // places. A word doesn't start with one.
+                if (IsCombiningMark(word[0])) return false;
+                return isCorrect(word, true);
+            }
+            // Arabic letters live on English punctuation keys (ج is [, ك is ;, ز is .): "h.d;" is not English,
+            // even though a spell checker sees two fine one-letter words in it.
+            foreach (char c in word)
+                if (!char.IsLetter(c) && c != '\'' && c != '’' && c != '-') return false;
+            if (LooksLikeEnglishShortcut(word) || isCorrect(word, false)) return true;
+            // Names, days and months are only right with a capital: monday, cairo.
+            return word == word.ToLowerInvariant()
+                && isCorrect(char.ToUpperInvariant(word[0]) + word.Substring(1), false);
+        }
+
+        static readonly HashSet<string> Prefixes = new HashSet<string>(CommonWords.EnglishPrefixes, StringComparer.Ordinal);
+
+        /// <summary>A word that may still be in the middle of being typed: it starts the way English words start.</summary>
+        public static bool CouldBeUnfinishedEnglish(string typed)
+        {
+            string word = typed.ToLowerInvariant().Replace("'", "");
+            foreach (char c in word) if (c < 'a' || c > 'z') return false;
+            return word.Length < 3 || Prefixes.Contains(word.Substring(0, 3));
         }
 
         static readonly HashSet<string> CommonEnglish = new HashSet<string>(CommonWords.English, StringComparer.Ordinal);
@@ -218,15 +288,6 @@ namespace KeySwap
                 else sb.Append(c);
             }
             return sb.ToString();
-        }
-
-        /// <summary>The word without punctuation around it: "(hello!" → "hello".</summary>
-        public static string LettersCore(string word)
-        {
-            int first = 0, last = word.Length - 1;
-            while (first <= last && !char.IsLetter(word[first])) first++;
-            while (last >= first && !char.IsLetter(word[last])) last--;
-            return first > last ? "" : word.Substring(first, last - first + 1);
         }
 
         static bool IsCombiningMark(char c)

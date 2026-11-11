@@ -1,5 +1,13 @@
 # What's new
 
+## 1.2.0
+Fewer wrong swaps, measured on 241 real English and Arabic sentences at every point you could pause (5,670 in all): correct text is now never changed.
+- **Pausing in the middle of an English word** no longer turns it into Arabic ("hel" → اثم). A half-typed word that starts like an English word is left alone until you finish it.
+- **Arabic words with ك ج د ز ط** typed on the English keyboard are now caught. Those letters sit on punctuation keys (`;` `[` `]` `.` `'`), which used to hide the word from the check.
+- **Sentences are fixed whole**, not just the ending, when they start with a name, a typo or a shortcut ("ahmed is meeting…", "pls send me…").
+- Days, months and names typed without a capital (monday, cairo) count as English.
+- More everyday contractions (he's, didn't, we'll…) and app names are recognised.
+
 ## 1.1.4
 - English chat shortcuts and names stay English even when their letters spell Arabic on the other keyboard (tmr, hmu, gps, ios, lol, brb, idk, asap…). Words in capitals (OK, ASAP) stay English too.
 - Inside an Arabic sentence typed on the wrong keyboard, a shortcut is still fixed together with the sentence.

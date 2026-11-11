@@ -66,6 +66,8 @@ namespace KeySwap
                     Check(!spell.IsCorrect("اثممخ", true), "spell checker: اثممخ is not a word");
                     var fix = AutoFixer.Decide(Keys("lvpfh", us.Map), us.Map, ar.Map, false, spell.IsCorrect);
                     Check(fix != null && fix.Text == "مرحبا", "real auto-fix مرحبا");
+                    foreach (string w in new[] { "hel", "tomo", "hello wor", "see you tomo" })
+                        Check(AutoFixer.Decide(Keys(w, us.Map), us.Map, ar.Map, false, spell.IsCorrect) == null, "real: half-typed English " + w);
                 }
                 else Console.WriteLine("note: no Arabic spell checker on this machine");
             }
@@ -127,6 +129,30 @@ namespace KeySwap
             // ...but inside an Arabic sentence typed on the English keyboard they are fixed with it.
             fix = AutoFixer.Decide(Keys("hkh tmr", latin), latin, arabic, false, lenient);
             Check(fix != null && fix.DeleteCount == 7, "auto: shortcut inside a wrong sentence is fixed");
+            // A pause in the middle of an English word must not turn it into Arabic.
+            foreach (string w in new[] { "hel", "tomo", "hello wor" })
+                Check(AutoFixer.Decide(Keys(w, latin), latin, arabic, false, lenient) == null, "auto: half-typed English " + w);
+            fix = AutoFixer.Decide(Keys("lvpfh ", latin), latin, arabic, false, lenient);
+            Check(fix != null && fix.Text == "مرحبا ", "auto: finished word is fixed");
+            // Arabic letters on English punctuation keys ([ is ج) are not English, whatever the checker says.
+            Func<string, bool, bool> initials = delegate (string w, bool ar) { return ar ? w == "جمل" : w == "lg"; };
+            fix = AutoFixer.Decide(Keys("جمل", arabic), latin, arabic, false, initials);
+            Check(fix != null && fix.Text == "جمل" && fix.DeleteCount == 3, "auto: [lg is جمل, not English");
+            // A name or typo at the start is fixed with the rest; days need no capital.
+            fix = AutoFixer.Decide(Keys("zzq how are you", latin), arabic, latin, true, isCorrect);
+            Check(fix != null && fix.Text == "zzq how are you" && fix.DeleteCount == 15, "auto: unknown first word fixed with the rest");
+            Func<string, bool, bool> days = delegate (string w, bool ar) { return !ar && (english.Contains(w) || w == "Monday"); };
+            fix = AutoFixer.Decide(Keys("how are you monday", latin), arabic, latin, true, days);
+            Check(fix != null && fix.Text == "how are you monday", "auto: monday needs no capital");
+            // A long English word against lenient Arabic counts only next to real proof.
+            var more = new HashSet<string> { "climb", "past", "the", "fence" };
+            Func<string, bool, bool> lenientMore = delegate (string w, bool ar) { return ar || more.Contains(w); };
+            Check(AutoFixer.Decide(Keys("climb", latin), arabic, latin, true, lenientMore) == null, "auto: weak proof alone is not enough");
+            fix = AutoFixer.Decide(Keys("climb past the fence", latin), arabic, latin, true, lenientMore);
+            Check(fix != null && fix.Text == "climb past the fence", "auto: weak proof next to real proof");
+            // A shortcut before a wrong sentence is fixed with it.
+            fix = AutoFixer.Decide(Keys("pls how are you", latin), arabic, latin, true, lenient);
+            Check(fix != null && fix.Text == "pls how are you", "auto: shortcut before a wrong sentence");
             // Correct words first, then wrong ones: only the wrong ending is fixed.
             var mixed = Keys("مرحبا ", arabic);
             mixed.AddRange(Keys("how are you", latin));

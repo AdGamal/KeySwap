@@ -30,8 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test (with the real Windows Arabic and US layouts) and build
-        shell: cmd
-        run: windows\build.bat --real-layouts
+        shell: pwsh
+        run: |
+          # On failure, show the end of the output as an error note on the build page.
+          cmd /c "windows\build.bat --real-layouts" 2>&1 | Tee-Object build.log
+          if ($LASTEXITCODE -ne 0) {
+            $tail = ((Get-Content build.log -Tail 40) -join "%0A") -replace "\r", ""
+            Write-Output "::error title=Windows build::$tail"
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: KeySwap-windows

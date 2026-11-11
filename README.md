@@ -58,6 +58,8 @@ You need both an Arabic and an English keyboard added on your computer:
 - Double-tapping Shift only counts when you press nothing else in between, so typing capital letters never triggers it.
 - On Windows, KeySwap can't fix text in programs running as administrator unless KeySwap also runs as administrator.
 - If nothing is selected, you'll hear a beep and nothing changes. (A few code editors copy the whole line when nothing is selected; select the text first.)
+- If you pause in the middle of an English word, nothing happens: a half-typed word that starts like an English word is only checked once you finish it (with a space or the next word).
+- English sentences that start with capital letters aren't fixed while typing on the Arabic keyboard (Shift types vowel marks there, which can't be deleted reliably). Select the text and double-tap Shift instead.
 - English chat shortcuts and names stay English even when they look like Arabic on the other keyboard: lol, brb, idk, tmr, asap, wanna, whatsapp… Words in capitals (OK, ASAP) stay English too. Inside an Arabic sentence typed on the wrong keyboard, they're fixed with the rest of it.
 - On the Windows Arabic keyboard, B types `لا`, the same as G then H. KeySwap picks `b` unless `gh` spells a common English word (light, through, enough…).
 
@@ -80,6 +82,6 @@ You need both an Arabic and an English keyboard added on your computer:
 ## Build it yourself
 
 - **Mac:** `./mac/build.sh` (needs Xcode Command Line Tools). Runs the tests, then makes `mac/build/KeySwap-mac.zip`. `./mac/build.sh install` also puts it in Applications and opens it.
-- **Word lists:** the everyday words used to judge wrong-keyboard text are in `shared/common-words-*.txt`, and English chat shortcuts that are never converted (lol, brb, tmr…) are in `shared/english-shortcuts.txt`. After editing them, run `python3 shared/generate-word-lists.py`.
+- **Word lists:** the everyday words used to judge wrong-keyboard text are in `shared/common-words-*.txt`, and English chat shortcuts that are never converted (lol, brb, tmr…) are in `shared/english-shortcuts.txt`. `mac/Tests/corpus/` holds real sentences that the tests replay at every possible pause. After editing the word lists, run `python3 shared/generate-word-lists.py`.
 - **Windows:** double-click `windows\build.bat`. It uses the C# compiler built into Windows, so there's nothing to install. Runs the tests, then makes `windows\build\KeySwap.exe`.
 - **Automatic:** every push to GitHub builds and tests both. Pushing a tag like `v1.0.0` publishes a release with both downloads.

@@ -5,6 +5,10 @@ from pathlib import Path
 here = Path(__file__).resolve().parent
 en = sorted(set((here / "common-words-en.txt").read_text(encoding="utf-8").split()))
 shortcuts = sorted(set((here / "english-shortcuts.txt").read_text(encoding="utf-8").split()))
+# The first three letters of every English word (from the public-domain Webster's list that ships with
+# macOS, /usr/share/dict/words): used to tell a half-typed English word from wrong-keyboard letters.
+prefixes = " ".join(sorted(set((here / "english-prefixes.txt").read_text(encoding="utf-8").split())))
+prefix_lines = [prefixes[i:i + 96] for i in range(0, len(prefixes), 96)]
 ar = sorted(set((here / "common-words-ar.txt").read_text(encoding="utf-8").split()))
 
 def chunks(words, quote):
@@ -24,13 +28,17 @@ swift = [f"// {header}", "", "enum CommonWords {",
          "    static let english: Set<String> = ["] + ["        " + l for l in chunks(en, '"')] + ["    ]",
          "    static let arabic: Set<String> = ["] + ["        " + l for l in chunks(ar, '"')] + ["    ]",
          "    /// Chat shortcuts and names (lol, brb, tmr...): English as typed, but no proof of anything when meant.",
-         "    static let englishShortcuts: Set<String> = ["] + ["        " + l for l in chunks(shortcuts, '"')] + ["    ]", "}", ""]
+         "    static let englishShortcuts: Set<String> = ["] + ["        " + l for l in chunks(shortcuts, '"')] + ["    ]",
+         "    /// The first three letters of every English word, to recognise a word that's still being typed.",
+         "    static let englishPrefixes: Set<String> = Set(\"\"\""] + ["        " + l.strip() for l in prefix_lines] + ["        \"\"\".split(whereSeparator: { $0 == \" \" || $0 == \"\\n\" }).map(String.init))", "}", ""]
 (here.parent / "mac/Sources/CommonWords.swift").write_text("\n".join(swift), encoding="utf-8")
 
 cs = [f"// {header}", "using System.Collections.Generic;", "", "namespace KeySwap", "{", "    public static class CommonWords", "    {",
       "        public static readonly string[] English = {"] + ["            " + l for l in chunks(en, '"')] + ["        };",
       "        public static readonly string[] Arabic = {"] + ["            " + l for l in chunks(ar, '"')] + ["        };",
       "        /// <summary>Chat shortcuts and names (lol, brb, tmr...): English as typed, but no proof of anything when meant.</summary>",
-      "        public static readonly string[] EnglishShortcuts = {"] + ["            " + l for l in chunks(shortcuts, '"')] + ["        };", "    }", "}", ""]
+      "        public static readonly string[] EnglishShortcuts = {"] + ["            " + l for l in chunks(shortcuts, '"')] + ["        };",
+      "        /// <summary>The first three letters of every English word, to recognise a word that's still being typed.</summary>",
+      "        public static readonly string[] EnglishPrefixes = (\"\""] + ["            + \"" + l + "\"" for l in prefix_lines] + ["        ).Split(' ');", "    }", "}", ""]
 (here.parent / "windows/CommonWords.cs").write_text("\r\n".join(cs), encoding="utf-8")
-print(f"{len(en)} English, {len(ar)} Arabic and {len(shortcuts)} shortcut words written")
+print(f"{len(en)} English, {len(ar)} Arabic, {len(shortcuts)} shortcut words and {len(prefixes.split())} prefixes written")
